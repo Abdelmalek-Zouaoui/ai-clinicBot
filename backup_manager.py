@@ -77,6 +77,34 @@ class BackupManager:
             return False, str(e)
 
     # ══════════════════════════════════════════════════════════════════════
+    # RESTORE
+    # ══════════════════════════════════════════════════════════════════════
+    
+    def restore_latest_backup(self) -> tuple[bool, str]:
+        """
+        Restore the most recent backup over the current database.
+        Returns (success: bool, message: str).
+        """
+        backups = self.get_backup_list()
+        if not backups:
+            return False, "No backups found."
+        
+        latest_file = backups[0]["filename"]
+        src = os.path.join(self.backup_dir, latest_file)
+        
+        # Optionally make a copy of the corrupted file before overwrite
+        corrupt_backup = self.db_path + ".corrupted"
+        try:
+            if os.path.exists(self.db_path):
+                shutil.copy2(self.db_path, corrupt_backup)
+            shutil.copy2(src, self.db_path)
+            logging.info(f"[Backup] Restored from {latest_file}")
+            return True, f"Successfully restored {latest_file}"
+        except Exception as e:
+            logging.error(f"[Backup] Restore failed: {e}")
+            return False, str(e)
+
+    # ══════════════════════════════════════════════════════════════════════
     # STATS & LISTING
     # ══════════════════════════════════════════════════════════════════════
 

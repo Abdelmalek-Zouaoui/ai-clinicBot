@@ -26,6 +26,8 @@ class DBManager:
         self.db_path = db_path
         self.conn    = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA cache_size=10000")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.cursor  = self.conn.cursor()
 
@@ -151,6 +153,12 @@ class DBManager:
                 FOREIGN KEY (rx_id) REFERENCES prescriptions(rx_id)
             )
         ''')
+
+        # Add indexes for often-queried columns
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_appt_patient_id ON appointments(patient_id)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments(appointment_date)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_appt_status ON appointments(status)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_patient_phone ON patients(phone)')
 
         # Seed default clinic identity settings
         clinic_defaults = [

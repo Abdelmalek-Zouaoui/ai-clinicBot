@@ -13,45 +13,35 @@ Entity mapping:
 
 import sys
 import os
-import site
 
 # ── Fix sys.path BEFORE any other imports ─────────────────────────────
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-# ── Reportlab — import using site-packages directly ───────────────────
-# On Windows, the CWD being clinic_app/ can shadow installed packages
-# if any local folder name matches a package name (e.g. model/).
-# We force-import from site-packages to avoid this.
-def _import_reportlab():
-    """Import reportlab from site-packages, bypassing local folder shadowing."""
-    # Find site-packages paths
-    sp_paths = site.getsitepackages() if hasattr(site, 'getsitepackages') else []
-    user_sp  = site.getusersitepackages() if hasattr(site, 'getusersitepackages') else ""
-    if user_sp:
-        sp_paths = [user_sp] + list(sp_paths)
-
-    # Temporarily put site-packages first and remove local model/ from path
-    _model_dir = os.path.join(_ROOT, "model")
-    saved_path = sys.path[:]
-    sys.path = sp_paths + [p for p in sys.path
-                            if p != _model_dir and p not in sp_paths]
-    try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen        import canvas as rl_canvas
-        return letter, rl_canvas
-    except Exception:
-        return None, None
-    finally:
-        sys.path = saved_path  # always restore
-
-letter, rl_canvas = _import_reportlab()
-
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
 import logging
+import threading
 from datetime import datetime
+
+# ── Dependency Check for Reportlab ────────────────────────────────────
+try:
+    from reportlab.lib.pagesizes import letter, A5
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas as rl_canvas
+except ImportError:
+    # Need temporary root tk to show messagebox before mainapp spins up
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror(
+        "Missing Dependency",
+        "ReportLab is not installed.\n"
+        "Please run: pip install reportlab"
+    )
+    sys.exit(1)
 
 # ── Model imports ──────────────────────────────────────────────────────
 from model.db_manager       import DBManager
@@ -103,8 +93,36 @@ class ClinicApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # ── Database ──────────────────────────────────────────────────
-        self.db = DBManager()
+        # ── Backup manager ────────────────────────────────────────────
+        from backup_manager import BackupManager
+        import sqlite3
+        
+        _db_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "database", "clinic.db"
+        )
+        self.backup_mgr = BackupManager(db_path=_db_path)
+        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+        # ── Database & Integrity Check ────────────────────────────────
+        try:
+            self.db = DBManager(_db_path)
+            integrity = self.db.fetch_one("PRAGMA integrity_check")
+            if not integrity or integrity[0].lower() != "ok":
+                raise sqlite3.DatabaseError(f"Integrity check failed: {integrity[0] if integrity else 'Unknown'}")
+        except sqlite3.DatabaseError as e:
+            logging.error(f"[{datetime.now()}] Database corruption detected: {e}")
+            messagebox.showwarning(
+                "Database Corruption",
+                "The database file appears to be corrupted.\nAttempting to restore from the latest backup..."
+            )
+            success, msg = self.backup_mgr.restore_latest_backup()
+            if success:
+                messagebox.showinfo("Restore Success", "Database restored successfully. Starting app...")
+                self.db = DBManager(_db_path)
+            else:
+                messagebox.showerror("Restore Failed", f"Failed to restore database: {msg}\nPlease contact support.")
+                sys.exit(1)
 
         # ── Models ────────────────────────────────────────────────────
         self.user_model   = UserModel(self.db)
@@ -113,14 +131,6 @@ class ClinicApp(ctk.CTk):
         self.appt_model    = AppointmentModel(self.db)
         self.rx_model      = PrescriptionModel(self.db)
 
-        # ── Backup manager ────────────────────────────────────────────
-        _db_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "database", "clinic.db"
-        )
-        self.backup_mgr = BackupManager(db_path=_db_path)
-        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
-
         # ── App-level state ───────────────────────────────────────────
         self._selected_image_path = None
         self._edit_mode           = False
@@ -128,6 +138,7 @@ class ClinicApp(ctk.CTk):
         self.current_lang         = "en"
         self.current_user: dict   = {}   # keys: user_id, username, role
         self.current_view         = None
+        self._dashboard_debounce_timer = None
 
         # ── Appointment session ───────────────────────────────────────
         # Mirrors the old _cart pattern — current appointment being built.
@@ -189,6 +200,9 @@ class ClinicApp(ctk.CTk):
     # ══════════════════════ SCREEN HELPERS ════════════════════════════
 
     def clear_screen(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "cleanup"):
+            self.current_view.cleanup()
+            
         for widget in self.winfo_children():
             widget.destroy()
 
@@ -372,6 +386,12 @@ class ClinicApp(ctk.CTk):
     # ══════════════════════ DASHBOARD DATA ════════════════════════════
 
     def refresh_dashboard_data(self):
+        """Debounced request to fetch today's clinic stats."""
+        if self._dashboard_debounce_timer:
+            self.after_cancel(self._dashboard_debounce_timer)
+        self._dashboard_debounce_timer = self.after(300, self._execute_refresh_dashboard_data)
+
+    def _execute_refresh_dashboard_data(self):
         """Fetch today's clinic stats and push them to the dashboard view.
         Safe to call from any view — all calls are guarded with hasattr."""
         try:
@@ -504,40 +524,77 @@ class ClinicApp(ctk.CTk):
 
     def on_save_patient(self, data: dict):
         """Validate and save a new patient record."""
-        name = data.get("name", "").strip()
-        if not name or len(name) < 2:
-            self.current_view.show_form_message(
-                "Patient full name is required (min 2 chars).", success=False)
-            return
+        try:
+            name = data.get("name", "").strip()
+            if not name or len(name) < 2:
+                self.current_view.show_form_message(
+                    "Patient full name is required (min 2 chars).", success=False)
+                return
 
-        phone = data.get("phone", "").strip()
-        if phone and self.patient_model.patient_exists_by_phone(phone):
-            self.current_view.show_form_message(
-                f"A patient with phone '{phone}' already exists.", success=False)
-            return
+            phone = data.get("phone", "").strip()
+            if phone:
+                if not phone.isdigit() or len(phone) < 9 or len(phone) > 15:
+                    self.current_view.show_form_message(
+                        "Phone must be digits only and 9-15 characters long.", success=False)
+                    return
+                if self.patient_model.patient_exists_by_phone(phone):
+                    self.current_view.show_form_message(
+                        f"A patient with phone '{phone}' already exists.", success=False)
+                    return
 
-        pid = self.patient_model.add_patient(
-            full_name       = name,
-            date_of_birth   = data.get("date_of_birth", ""),
-            gender          = data.get("gender", "Other"),
-            phone           = phone,
-            email           = data.get("email", ""),
-            address         = data.get("address", ""),
-            wilaya          = data.get("wilaya", ""),
-            blood_type      = data.get("blood_type", ""),
-            allergies       = data.get("allergies", ""),
-            medical_history = data.get("medical_history", ""),
-            notes           = data.get("notes", ""),
-        )
-        if pid:
-            self.current_view.show_form_message(
-                f"Patient '{name}' registered successfully!", success=True)
-            if hasattr(self.current_view, "clear_patient_form"):
-                self.current_view.clear_patient_form()
-            self._refresh_patient_roster()
-        else:
-            self.current_view.show_form_message(
-                "Failed to save patient. Try again.", success=False)
+            dob = data.get("date_of_birth", "").strip()
+            if dob:
+                try:
+                    dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
+                    if dob_date > datetime.now().date():
+                        self.current_view.show_form_message(
+                            "Date of birth cannot be in the future.", success=False)
+                        return
+                except ValueError:
+                    self.current_view.show_form_message(
+                        "Date of birth must be in YYYY-MM-DD format.", success=False)
+                    return
+
+            email = data.get("email", "").strip()
+            if email:
+                import re
+                if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                    self.current_view.show_form_message(
+                        "Invalid email address format.", success=False)
+                    return
+
+            blood_type = data.get("blood_type", "").strip().upper()
+            valid_blood_types = {"", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
+            if blood_type not in valid_blood_types:
+                self.current_view.show_form_message(
+                    "Invalid blood type.", success=False)
+                return
+
+            pid = self.patient_model.add_patient(
+                full_name       = name,
+                date_of_birth   = dob,
+                gender          = data.get("gender", "Other"),
+                phone           = phone,
+                email           = email,
+                address         = data.get("address", ""),
+                wilaya          = data.get("wilaya", ""),
+                blood_type      = blood_type,
+                allergies       = data.get("allergies", ""),
+                medical_history = data.get("medical_history", ""),
+                notes           = data.get("notes", ""),
+            )
+            if pid:
+                self.current_view.show_form_message(
+                    f"Patient '{name}' registered successfully!", success=True)
+                if hasattr(self.current_view, "clear_patient_form"):
+                    self.current_view.clear_patient_form()
+                self._refresh_patient_roster()
+            else:
+                self.current_view.show_form_message(
+                    "Failed to save patient.", success=False)
+        except Exception as e:
+            logging.error(f"Error in on_save_patient: {e}", exc_info=True)
+            self.current_view.show_form_message(f"Registration failed: {str(e)}", success=False)
 
     def on_update_patient(self, patient_id: int, data: dict):
         """Validate and update an existing patient record."""
@@ -546,16 +603,52 @@ class ClinicApp(ctk.CTk):
             self.current_view.show_form_message(
                 "Patient full name is required (min 2 chars).", success=False)
             return
+
+        phone = data.get("phone", "").strip()
+        if phone:
+            if not phone.isdigit() or len(phone) < 9 or len(phone) > 15:
+                self.current_view.show_form_message(
+                    "Phone must be digits only and 9-15 characters long.", success=False)
+                return
+
+        dob = data.get("date_of_birth", "").strip()
+        if dob:
+            try:
+                dob_date = datetime.strptime(dob, "%Y-%m-%d").date()
+                if dob_date > datetime.now().date():
+                    self.current_view.show_form_message(
+                        "Date of birth cannot be in the future.", success=False)
+                    return
+            except ValueError:
+                self.current_view.show_form_message(
+                    "Date of birth must be in YYYY-MM-DD format.", success=False)
+                return
+
+        email = data.get("email", "").strip()
+        if email:
+            import re
+            if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                self.current_view.show_form_message(
+                    "Invalid email address format.", success=False)
+                return
+
+        blood_type = data.get("blood_type", "").strip().upper()
+        valid_blood_types = {"", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
+        if blood_type not in valid_blood_types:
+            self.current_view.show_form_message(
+                "Invalid blood type.", success=False)
+            return
+
         ok = self.patient_model.update_patient(
             patient_id,
             full_name       = name,
-            date_of_birth   = data.get("date_of_birth", ""),
+            date_of_birth   = dob,
             gender          = data.get("gender", "Other"),
-            phone           = data.get("phone", ""),
-            email           = data.get("email", ""),
+            phone           = phone,
+            email           = email,
             address         = data.get("address", ""),
             wilaya          = data.get("wilaya", ""),
-            blood_type      = data.get("blood_type", ""),
+            blood_type      = blood_type,
             allergies       = data.get("allergies", ""),
             medical_history = data.get("medical_history", ""),
             notes           = data.get("notes", ""),
@@ -599,31 +692,36 @@ class ClinicApp(ctk.CTk):
         Validate and create a new appointment.
         data keys: patient_id, visit_type, chief_complaint
         """
-        patient_id = data.get("patient_id")
-        if not patient_id:
-            if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Select a patient first.", success=False)
-            return
+        try:
+            patient_id = data.get("patient_id")
+            if not patient_id:
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Select a patient first.", success=False)
+                return
 
-        appt_id = self.appt_model.create_appointment(
-            patient_id        = patient_id,
-            doctor_id         = self.current_user.get("user_id"),
-            visit_type        = data.get("visit_type", "Consultation"),
-            chief_complaint   = data.get("chief_complaint", ""),
-            appointment_date  = data.get("appointment_date", None),
-        )
-        if appt_id:
-            self._active_appointment_id = appt_id
+            appt_id = self.appt_model.create_appointment(
+                patient_id        = patient_id,
+                doctor_id         = self.current_user.get("user_id"),
+                visit_type        = data.get("visit_type", "Consultation"),
+                chief_complaint   = data.get("chief_complaint", ""),
+                appointment_date  = data.get("appointment_date", None),
+            )
+            if appt_id:
+                self._active_appointment_id = appt_id
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Appointment created!", success=True)
+                self._refresh_appointment_view()
+                self.refresh_dashboard_data()
+            else:
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Failed to create appointment.", success=False)
+        except Exception as e:
+            logging.error(f"Error in on_create_appointment: {e}", exc_info=True)
             if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Appointment created!", success=True)
-            self._refresh_appointment_view()
-            self.refresh_dashboard_data()
-        else:
-            if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Failed to create appointment.", success=False)
+                self.current_view.show_form_message(f"Appointment failed: {str(e)}", success=False)
 
     def on_update_appointment_status(self, appointment_id: int,
                                       status: str,
@@ -729,10 +827,15 @@ class ClinicApp(ctk.CTk):
         self.appt_model.update_status(
             self._active_appointment_id, "Completed")
 
-        self.after(800, self._finalize_checkout)
+        threading.Thread(target=self._finalize_checkout_thread, daemon=True).start()
 
-    def _finalize_checkout(self):
+    def _finalize_checkout_thread(self):
+        """Runs in background to generate PDF, preventing UI freeze."""
         self._generate_pdf_receipt()
+        self.after(0, self._on_checkout_complete)
+
+    def _on_checkout_complete(self):
+        """Safely updates UI from the main thread after PDF is generated."""
         if hasattr(self.current_view, "show_loading"):
             self.current_view.show_loading(False)
         if hasattr(self.current_view, "clear_cart"):
@@ -754,48 +857,53 @@ class ClinicApp(ctk.CTk):
         data keys: patient_id, appointment_id (optional), notes, items[]
           item keys: medicine_name, dosage, frequency, duration, instructions
         """
-        patient_id = data.get("patient_id")
-        if not patient_id:
-            if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Select a patient first.", success=False)
-            return
+        try:
+            patient_id = data.get("patient_id")
+            if not patient_id:
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Select a patient first.", success=False)
+                return
 
-        items = data.get("items", [])
-        if not items:
-            if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Add at least one medicine.", success=False)
-            return
+            items = data.get("items", [])
+            if not items:
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Add at least one medicine.", success=False)
+                return
 
-        rx_id = self.rx_model.create_prescription(
-            patient_id     = patient_id,
-            appointment_id = data.get("appointment_id"),
-            doctor_id      = self.current_user.get("user_id"),
-            notes          = data.get("notes", ""),
-        )
-        if not rx_id:
-            if hasattr(self.current_view, "show_form_message"):
-                self.current_view.show_form_message(
-                    "Failed to create prescription.", success=False)
-            return
-
-        for item in items:
-            self.rx_model.add_item(
-                rx_id,
-                medicine_name = item.get("medicine_name", ""),
-                dosage        = item.get("dosage", ""),
-                frequency     = item.get("frequency", ""),
-                duration      = item.get("duration", ""),
-                instructions  = item.get("instructions", ""),
+            rx_id = self.rx_model.create_prescription(
+                patient_id     = patient_id,
+                appointment_id = data.get("appointment_id"),
+                doctor_id      = self.current_user.get("user_id"),
+                notes          = data.get("notes", ""),
             )
+            if not rx_id:
+                if hasattr(self.current_view, "show_form_message"):
+                    self.current_view.show_form_message(
+                        "Failed to create prescription.", success=False)
+                return
 
-        self._generate_prescription_pdf(rx_id)
-        if hasattr(self.current_view, "show_form_message"):
-            self.current_view.show_form_message(
-                "Prescription saved and printed!", success=True)
-        if hasattr(self.current_view, "clear_prescription_form"):
-            self.current_view.clear_prescription_form()
+            for item in items:
+                self.rx_model.add_item(
+                    rx_id,
+                    medicine_name = item.get("medicine_name", ""),
+                    dosage        = item.get("dosage", ""),
+                    frequency     = item.get("frequency", ""),
+                    duration      = item.get("duration", ""),
+                    instructions  = item.get("instructions", ""),
+                )
+
+            self._generate_prescription_pdf(rx_id)
+            if hasattr(self.current_view, "show_form_message"):
+                self.current_view.show_form_message(
+                    "Prescription saved and printed!", success=True)
+            if hasattr(self.current_view, "clear_prescription_form"):
+                self.current_view.clear_prescription_form()
+        except Exception as e:
+            logging.error(f"Error in on_create_prescription: {e}", exc_info=True)
+            if hasattr(self.current_view, "show_form_message"):
+                self.current_view.show_form_message(f"Prescription failed: {str(e)}", success=False)
 
     # ══════════════════════ PDF GENERATION ════════════════════════════
 
@@ -922,28 +1030,6 @@ class ClinicApp(ctk.CTk):
         rx_dir    = os.path.join(base_dir, "prescriptions")
         os.makedirs(rx_dir, exist_ok=True)
         file_path = os.path.join(rx_dir, f"rx_{rx_id:04d}.pdf")
-
-        # Import reportlab safely (same technique as top-level import)
-        try:
-            sp_paths = site.getsitepackages() if hasattr(site, 'getsitepackages') else []
-            user_sp  = site.getusersitepackages() if hasattr(site, 'getusersitepackages') else ""
-            if user_sp:
-                sp_paths = [user_sp] + list(sp_paths)
-            _model_dir = os.path.join(_ROOT, "model")
-            saved_path = sys.path[:]
-            sys.path = sp_paths + [p for p in sys.path
-                                    if p != _model_dir and p not in sp_paths]
-            from reportlab.lib.pagesizes import A5
-            from reportlab.lib.units     import cm
-            from reportlab.lib           import colors
-            sys.path = saved_path
-        except Exception:
-            sys.path = saved_path if 'saved_path' in dir() else sys.path
-            messagebox.showerror(
-                "PDF Error",
-                "ReportLab is not installed.\n"
-                "Run:  pip install reportlab")
-            return
 
         W, H = A5
         c = rl_canvas.Canvas(file_path, pagesize=A5)

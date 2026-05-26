@@ -17,6 +17,8 @@ from tkinter import filedialog, messagebox
 import os
 from datetime import datetime
 from view.sidebar import Sidebar, Toast
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
 # openpyxl — installed via: pip install openpyxl
 try:
