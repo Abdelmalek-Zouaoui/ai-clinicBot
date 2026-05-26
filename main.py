@@ -93,6 +93,12 @@ class ClinicApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
+        self.container = ctk.CTkFrame(self)
+        self.container.grid(row=0, column=0, sticky="nsew")
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
+        self._frames = {}
+
         # ── Backup manager ────────────────────────────────────────────
         from backup_manager import BackupManager
         import sqlite3
@@ -203,8 +209,19 @@ class ClinicApp(ctk.CTk):
         if hasattr(self, "current_view") and hasattr(self.current_view, "cleanup"):
             self.current_view.cleanup()
             
-        for widget in self.winfo_children():
-            widget.destroy()
+        if hasattr(self, "container"):
+            for widget in self.container.winfo_children():
+                if widget not in self._frames.values():
+                    widget.destroy()
+        else:
+            for widget in self.winfo_children():
+                widget.destroy()
+
+    def show_frame(self, frame):
+        self.update_idletasks()
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.lift()
+        self.current_view = frame
 
     # ══════════════════════ NAVIGATION ════════════════════════════════
 
@@ -258,50 +275,62 @@ class ClinicApp(ctk.CTk):
         self.current_user = {}
         self._active_appointment_id = None
         self._appt_services = {}
-        self.current_view = LoginView(parent=self, controller=self)
+        frame = LoginView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
 
     def show_dashboard(self):
         self.clear_screen()
-        self.current_view = DashboardView(
-            parent=self, controller=self,
+        frame = DashboardView(
+            parent=self.container if hasattr(self, "container") else self, controller=self,
             lang=self.current_lang,
             role=self.current_user.get("role", "admin"),
             username=self.current_user.get("username", "Admin"),
         )
+        self.show_frame(frame)
         self.refresh_dashboard_data()
 
     def show_service_list(self):
         self.clear_screen()
-        self.current_view = ServiceListView(parent=self, controller=self)
+        frame = ServiceListView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
         self.current_view.render_services(self.service_model.get_all_services())
 
     def show_add_service(self):
         self.clear_screen()
         self._edit_mode = False
         self._editing_service_id = None
-        self.current_view = AddServiceView(parent=self, controller=self)
+        if "add_service" not in self._frames:
+            self._frames["add_service"] = AddServiceView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        frame = self._frames["add_service"]
+        self.show_frame(frame)
 
     def open_edit_service(self, service_data: dict):
         """Open AddServiceView pre-filled with an existing service's data."""
         self.clear_screen()
         self._edit_mode = True
         self._editing_service_id = service_data.get("service_id")
-        self.current_view = AddServiceView(parent=self, controller=self)
+        if "add_service" not in self._frames:
+            self._frames["add_service"] = AddServiceView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        frame = self._frames["add_service"]
+        self.show_frame(frame)
         self.current_view.set_edit_mode(True)
         self.current_view.populate_form(service_data)
 
     def show_appointments(self):
         self.clear_screen()
-        self.current_view = AppointmentView(parent=self, controller=self)
+        frame = AppointmentView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
         self._refresh_appointment_view()
 
     def show_waiting_room(self):
         self.clear_screen()
-        self.current_view = WaitingRoomView(parent=self, controller=self)
+        frame = WaitingRoomView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
 
     def show_export(self):
         self.clear_screen()
-        self.current_view = ExportView(parent=self, controller=self)
+        frame = ExportView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
 
     def _refresh_appointment_view(self):
         if hasattr(self.current_view, "render_queue"):
@@ -312,14 +341,16 @@ class ClinicApp(ctk.CTk):
 
     def show_prescriptions(self):
         self.clear_screen()
-        self.current_view = PrescriptionView(parent=self, controller=self)
+        frame = PrescriptionView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
         if hasattr(self.current_view, "render_patients"):
             self.current_view.render_patients(
                 self.patient_model.get_all_patients())
 
     def show_patients(self):
         self.clear_screen()
-        self.current_view = PatientView(parent=self, controller=self)
+        frame = PatientView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
         self._refresh_patient_roster()
 
     def _refresh_patient_roster(self):
@@ -337,12 +368,16 @@ class ClinicApp(ctk.CTk):
 
     def show_users(self):
         self.clear_screen()
-        self.current_view = UserMgmtView(parent=self, controller=self)
+        frame = UserMgmtView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        self.show_frame(frame)
         self.current_view.render(self.user_model.get_all_users())
 
     def show_settings(self):
         self.clear_screen()
-        self.current_view = SettingsView(parent=self, controller=self)
+        if "settings" not in self._frames:
+            self._frames["settings"] = SettingsView(parent=self.container if hasattr(self, "container") else self, controller=self)
+        frame = self._frames["settings"]
+        self.show_frame(frame)
         if hasattr(self.current_view, "set_identity_fields"):
             self.current_view.set_identity_fields(
                 self.get_all_identity_settings())
