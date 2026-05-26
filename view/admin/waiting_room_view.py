@@ -328,7 +328,7 @@ class WaitingRoomView(ctk.CTkFrame):
     def _start_visit(self, appt: dict):
         try:
             self.controller.on_update_appointment_status(
-                appt["appointment_id"], "In Progress", "", "")
+                appt["appointment_id"], "In Progress", None, None)
         except Exception:
             pass
         Toast.show(self._content,
@@ -339,7 +339,7 @@ class WaitingRoomView(ctk.CTkFrame):
     def _no_show(self, appt: dict):
         try:
             self.controller.on_update_appointment_status(
-                appt["appointment_id"], "No Show", "", "")
+                appt["appointment_id"], "No Show", None, None)
         except Exception:
             pass
         self._load()

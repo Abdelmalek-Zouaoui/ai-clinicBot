@@ -543,7 +543,6 @@ class PatientView(ctk.CTkFrame):
 
         self._build_topbar()
         self._build_table()
-        self._load_patients()
 
     # ══════════════════════════════════════════════════════════════════════
     # DATA

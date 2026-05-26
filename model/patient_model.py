@@ -7,7 +7,7 @@ class PatientModel:
                     phone="", email="", address="", wilaya="",
                     blood_type="", allergies="",
                     medical_history="", notes=""):
-        ok = self.db.execute_query(
+        return self.db.execute_insert(
             """INSERT INTO patients
                (full_name, date_of_birth, gender, phone, email,
                 address, wilaya, blood_type, allergies,
@@ -17,11 +17,6 @@ class PatientModel:
              address, wilaya, blood_type, allergies,
              medical_history, notes)
         )
-        if not ok:
-            return None
-        row = self.db.fetch_one(
-            "SELECT MAX(patient_id) FROM patients", ())
-        return row[0] if row else None
 
     def get_all_patients(self) -> list[dict]:
         rows = self.db.fetch_all(

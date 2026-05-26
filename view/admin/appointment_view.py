@@ -492,7 +492,7 @@ class AppointmentDetailWindow(ctk.CTkToplevel):
     def _update_status(self, status):
         appt_id = self.appt["appointment_id"]
         diag    = self._diag_box.get("1.0","end").strip()
-        self.controller.on_update_appointment_status(appt_id, status, diag, "")
+        self.controller.on_update_appointment_status(appt_id, status, diag, None)
         self._bill_msg.configure(text=f"Status → {status}", text_color=SUCCESS)
         self.appt["status"] = status
         if self.on_refresh:
@@ -621,7 +621,6 @@ class AppointmentView(ctk.CTkFrame):
 
         self._build_topbar()
         self._build_table()
-        self._load_queue()
 
     def _load_queue(self):
         try:
@@ -811,7 +810,7 @@ class AppointmentView(ctk.CTkFrame):
     def _mark_arrived(self, appt):
         try:
             self.controller.on_update_appointment_status(
-                appt["appointment_id"],"Waiting","","")
+                appt["appointment_id"],"Waiting",None,None)
         except Exception:
             pass
         Toast.show(self._content,
@@ -822,7 +821,7 @@ class AppointmentView(ctk.CTkFrame):
     def _mark_status(self, appt, new_status):
         try:
             self.controller.on_update_appointment_status(
-                appt["appointment_id"],new_status,"","")
+                appt["appointment_id"],new_status,None,None)
         except Exception:
             pass
         self._load_queue()
@@ -856,8 +855,6 @@ class AppointmentView(ctk.CTkFrame):
         else:
             for idx,appt in enumerate(appointments):
                 self._render_row(appt, idx)
-
-    def render_patients(self, patients): pass
 
     def clear_cart(self):
         if self._detail_window and self._detail_window.winfo_exists():

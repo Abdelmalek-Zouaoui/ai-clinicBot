@@ -7,17 +7,12 @@ class PrescriptionModel:
                             appointment_id: int = None,
                             doctor_id: int = None,
                             notes: str = "") -> int | None:
-        ok = self.db.execute_query(
+        return self.db.execute_insert(
             """INSERT INTO prescriptions
                (patient_id, appointment_id, doctor_id, notes)
                VALUES (?,?,?,?)""",
             (patient_id, appointment_id, doctor_id, notes)
         )
-        if not ok:
-            return None
-        row = self.db.fetch_one(
-            "SELECT MAX(rx_id) FROM prescriptions", ())
-        return row[0] if row else None
 
     def add_item(self, rx_id: int, medicine_name: str,
                  dosage: str = "", frequency: str = "",

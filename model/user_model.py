@@ -20,9 +20,17 @@ class UserModel:
     # ══════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _hash(password: str) -> str:
-        """SHA-256 hash of the password."""
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    def _hash(password: str, salt: str = "") -> str:
+        """PBKDF2-HMAC-SHA256 hash of the password with salt. Unsalted SHA-256 fallback."""
+        if not salt:
+            return hashlib.sha256(password.encode("utf-8")).hexdigest()
+        combined_salt = f"clinic_app_salt_{salt.lower()}".encode("utf-8")
+        return hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            combined_salt,
+            iterations=100000
+        ).hex()
 
     # ══════════════════════════════════════════════════════════════════════
     # CRUD
@@ -34,12 +42,13 @@ class UserModel:
                  phone: str = "",
                  notes: str = "") -> bool:
         """Create a new user account. Returns True on success."""
+        username_clean = username.strip()
         return bool(self.db.execute_query(
             """INSERT INTO users
                (username, password, role, full_name, phone, notes)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (username.strip(),
-             self._hash(password),
+            (username_clean,
+             self._hash(password, username_clean),
              role, full_name, phone, notes)
         ))
 
@@ -48,14 +57,30 @@ class UserModel:
         """
         Verify credentials.
         Returns (user_id, username, role) on success, None on failure.
+        Allows seamless migration from old SHA-256 to PBKDF2-HMAC-SHA256.
         """
+        username_clean = username.strip()
         row = self.db.fetch_one(
-            """SELECT user_id, username, role
+            """SELECT user_id, username, role, password
                FROM users
-               WHERE username=? AND password=?""",
-            (username.strip(), self._hash(password))
+               WHERE username=?""",
+            (username_clean,)
         )
-        return (row[0], row[1], row[2]) if row else None
+        if not row:
+            return None
+        
+        user_id, db_username, role, db_password = row
+        new_hash = self._hash(password, username_clean)
+        old_hash = self._hash(password)
+        
+        if db_password == new_hash:
+            return (user_id, db_username, role)
+        elif db_password == old_hash:
+            # Upgrade legacy password hash to PBKDF2
+            self.change_password(user_id, password)
+            return (user_id, db_username, role)
+            
+        return None
 
     def get_all_users(self) -> list[dict]:
         rows = self.db.fetch_all(
@@ -102,9 +127,13 @@ class UserModel:
 
     def change_password(self, user_id: int,
                         new_password: str) -> bool:
+        user = self.get_user(user_id)
+        if not user:
+            return False
+        username = user.get("username", "")
         return bool(self.db.execute_query(
             "UPDATE users SET password=? WHERE user_id=?",
-            (self._hash(new_password), user_id)
+            (self._hash(new_password, username), user_id)
         ))
 
     def update_user(self, user_id: int, full_name: str = "",

@@ -218,11 +218,14 @@ class ClinicApp(ctk.CTk):
                 widget.destroy()
 
     def show_frame(self, frame):
-        for f in self._frames.values():
-            f.grid_remove()
-        self.update_idletasks()
+        if self.current_view == frame:
+            return
         frame.grid(row=0, column=0, sticky="nsew")
         frame.lift()
+        self.update_idletasks()
+        for f in self._frames.values():
+            if f != frame:
+                f.grid_remove()
         self.current_view = frame
 
     # ══════════════════════ NAVIGATION ════════════════════════════════
@@ -315,9 +318,6 @@ class ClinicApp(ctk.CTk):
         self.current_view.populate_form(service_data)
 
     def show_appointments(self):
-        old = self._frames.pop("appointments", None)
-        if old:
-            old.destroy()
         if "appointments" not in self._frames:
             self._frames["appointments"] = AppointmentView(parent=self.container, controller=self)
         self.show_frame(self._frames["appointments"])
@@ -349,9 +349,6 @@ class ClinicApp(ctk.CTk):
                 self.patient_model.get_all_patients())
 
     def show_patients(self):
-        old = self._frames.pop("patients", None)
-        if old:
-            old.destroy()
         if "patients" not in self._frames:
             self._frames["patients"] = PatientView(parent=self.container, controller=self)
         self.show_frame(self._frames["patients"])
@@ -411,6 +408,12 @@ class ClinicApp(ctk.CTk):
         user_id, username, role = result
         self.current_user = {
             "user_id": user_id, "username": username, "role": role}
+        
+        # Destroy login view and clear reference before navigating
+        if self.current_view:
+            self.current_view.destroy()
+            self.current_view = None
+
         if self._is_admin():
             self.show_dashboard()
         else:
@@ -762,8 +765,8 @@ class ClinicApp(ctk.CTk):
 
     def on_update_appointment_status(self, appointment_id: int,
                                       status: str,
-                                      diagnosis: str = "",
-                                      notes: str = ""):
+                                      diagnosis: str = None,
+                                      notes: str = None):
         """Called from the appointment queue view."""
         ok = self.appt_model.update_status(
             appointment_id, status, diagnosis, notes)

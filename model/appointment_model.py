@@ -14,7 +14,7 @@ class AppointmentModel:
                            chief_complaint: str = "",
                            appointment_date: str = None) -> int | None:
         dt = appointment_date or date.today().isoformat()
-        ok = self.db.execute_query(
+        return self.db.execute_insert(
             """INSERT INTO appointments
                (patient_id, doctor_id, appointment_date,
                 status, visit_type, chief_complaint)
@@ -22,21 +22,21 @@ class AppointmentModel:
             (patient_id, doctor_id, dt,
              "Pending", visit_type, chief_complaint)
         )
-        if not ok:
-            return None
-        row = self.db.fetch_one(
-            "SELECT MAX(appointment_id) FROM appointments", ())
-        return row[0] if row else None
 
     def update_status(self, appointment_id: int,
-                      status: str, diagnosis: str = "",
-                      notes: str = "") -> bool:
-        return bool(self.db.execute_query(
-            """UPDATE appointments
-               SET status=?, diagnosis=?, notes=?
-               WHERE appointment_id=?""",
-            (status, diagnosis, notes, appointment_id)
-        ))
+                      status: str, diagnosis: str = None,
+                      notes: str = None) -> bool:
+        query = "UPDATE appointments SET status=?"
+        params = [status]
+        if diagnosis is not None:
+            query += ", diagnosis=?"
+            params.append(diagnosis)
+        if notes is not None:
+            query += ", notes=?"
+            params.append(notes)
+        query += " WHERE appointment_id=?"
+        params.append(appointment_id)
+        return bool(self.db.execute_query(query, tuple(params)))
 
     def update_total(self, appointment_id: int, total: float) -> bool:
         return bool(self.db.execute_query(

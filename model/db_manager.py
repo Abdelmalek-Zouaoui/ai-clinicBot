@@ -12,6 +12,7 @@ Responsibilities:
 import sqlite3
 import os
 import logging
+import threading
 
 
 class DBManager:
@@ -24,6 +25,7 @@ class DBManager:
             db_path = os.path.join(db_dir, "clinic.db")
 
         self.db_path = db_path
+        self.lock    = threading.Lock()
         self.conn    = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -179,31 +181,45 @@ class DBManager:
 
     def execute_query(self, query: str, params: tuple = ()) -> bool:
         """Execute an INSERT / UPDATE / DELETE. Returns True on success."""
-        try:
-            self.cursor.execute(query, params)
-            self.conn.commit()
-            return True
-        except sqlite3.Error as e:
-            logging.error(f"[DB] execute_query error: {e}\nQuery: {query}")
-            return False
+        with self.lock:
+            try:
+                self.cursor.execute(query, params)
+                self.conn.commit()
+                return True
+            except sqlite3.Error as e:
+                logging.error(f"[DB] execute_query error: {e}\nQuery: {query}")
+                return False
+
+    def execute_insert(self, query: str, params: tuple = ()) -> int | None:
+        """Execute an INSERT and return the last inserted row ID (lastrowid) or None on failure."""
+        with self.lock:
+            try:
+                self.cursor.execute(query, params)
+                self.conn.commit()
+                return self.cursor.lastrowid
+            except sqlite3.Error as e:
+                logging.error(f"[DB] execute_insert error: {e}\nQuery: {query}")
+                return None
 
     def fetch_one(self, query: str, params: tuple = ()):
         """Return the first row or None."""
-        try:
-            self.cursor.execute(query, params)
-            return self.cursor.fetchone()
-        except sqlite3.Error as e:
-            logging.error(f"[DB] fetch_one error: {e}\nQuery: {query}")
-            return None
+        with self.lock:
+            try:
+                self.cursor.execute(query, params)
+                return self.cursor.fetchone()
+            except sqlite3.Error as e:
+                logging.error(f"[DB] fetch_one error: {e}\nQuery: {query}")
+                return None
 
     def fetch_all(self, query: str, params: tuple = ()):
         """Return all rows as a list, or an empty list on error."""
-        try:
-            self.cursor.execute(query, params)
-            return self.cursor.fetchall()
-        except sqlite3.Error as e:
-            logging.error(f"[DB] fetch_all error: {e}\nQuery: {query}")
-            return []
+        with self.lock:
+            try:
+                self.cursor.execute(query, params)
+                return self.cursor.fetchall()
+            except sqlite3.Error as e:
+                logging.error(f"[DB] fetch_all error: {e}\nQuery: {query}")
+                return []
 
     # ══════════════════════════════════════════════════════════════════════
     # SETTINGS  (key-value store)
