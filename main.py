@@ -93,7 +93,7 @@ class ClinicApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        self.container = ctk.CTkFrame(self)
+        self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.grid(row=0, column=0, sticky="nsew")
         self.container.grid_rowconfigure(0, weight=1)
         self.container.grid_columnconfigure(0, weight=1)
@@ -218,6 +218,8 @@ class ClinicApp(ctk.CTk):
                 widget.destroy()
 
     def show_frame(self, frame):
+        for f in self._frames.values():
+            f.grid_remove()
         self.update_idletasks()
         frame.grid(row=0, column=0, sticky="nsew")
         frame.lift()
@@ -279,58 +281,57 @@ class ClinicApp(ctk.CTk):
         self.show_frame(frame)
 
     def show_dashboard(self):
-        self.clear_screen()
-        frame = DashboardView(
-            parent=self.container if hasattr(self, "container") else self, controller=self,
-            lang=self.current_lang,
-            role=self.current_user.get("role", "admin"),
-            username=self.current_user.get("username", "Admin"),
-        )
-        self.show_frame(frame)
+        if "dashboard" not in self._frames:
+            self._frames["dashboard"] = DashboardView(
+                parent=self.container, controller=self,
+                lang=self.current_lang,
+                role=self.current_user.get("role", "admin"),
+                username=self.current_user.get("username", "Admin"),
+            )
+        self.show_frame(self._frames["dashboard"])
         self.refresh_dashboard_data()
 
     def show_service_list(self):
-        self.clear_screen()
-        frame = ServiceListView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        if "service_list" not in self._frames:
+            self._frames["service_list"] = ServiceListView(parent=self.container, controller=self)
+        self.show_frame(self._frames["service_list"])
         self.current_view.render_services(self.service_model.get_all_services())
 
     def show_add_service(self):
-        self.clear_screen()
         self._edit_mode = False
         self._editing_service_id = None
         if "add_service" not in self._frames:
-            self._frames["add_service"] = AddServiceView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        frame = self._frames["add_service"]
-        self.show_frame(frame)
+            self._frames["add_service"] = AddServiceView(parent=self.container, controller=self)
+        self.show_frame(self._frames["add_service"])
 
     def open_edit_service(self, service_data: dict):
         """Open AddServiceView pre-filled with an existing service's data."""
-        self.clear_screen()
         self._edit_mode = True
         self._editing_service_id = service_data.get("service_id")
         if "add_service" not in self._frames:
-            self._frames["add_service"] = AddServiceView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        frame = self._frames["add_service"]
-        self.show_frame(frame)
+            self._frames["add_service"] = AddServiceView(parent=self.container, controller=self)
+        self.show_frame(self._frames["add_service"])
         self.current_view.set_edit_mode(True)
         self.current_view.populate_form(service_data)
 
     def show_appointments(self):
-        self.clear_screen()
-        frame = AppointmentView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        old = self._frames.pop("appointments", None)
+        if old:
+            old.destroy()
+        if "appointments" not in self._frames:
+            self._frames["appointments"] = AppointmentView(parent=self.container, controller=self)
+        self.show_frame(self._frames["appointments"])
         self._refresh_appointment_view()
 
     def show_waiting_room(self):
-        self.clear_screen()
-        frame = WaitingRoomView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        if "waiting_room" not in self._frames:
+            self._frames["waiting_room"] = WaitingRoomView(parent=self.container, controller=self)
+        self.show_frame(self._frames["waiting_room"])
 
     def show_export(self):
-        self.clear_screen()
-        frame = ExportView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        if "export" not in self._frames:
+            self._frames["export"] = ExportView(parent=self.container, controller=self)
+        self.show_frame(self._frames["export"])
 
     def _refresh_appointment_view(self):
         if hasattr(self.current_view, "render_queue"):
@@ -340,17 +341,20 @@ class ClinicApp(ctk.CTk):
                 self.patient_model.get_all_patients())
 
     def show_prescriptions(self):
-        self.clear_screen()
-        frame = PrescriptionView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        if "prescriptions" not in self._frames:
+            self._frames["prescriptions"] = PrescriptionView(parent=self.container, controller=self)
+        self.show_frame(self._frames["prescriptions"])
         if hasattr(self.current_view, "render_patients"):
             self.current_view.render_patients(
                 self.patient_model.get_all_patients())
 
     def show_patients(self):
-        self.clear_screen()
-        frame = PatientView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        old = self._frames.pop("patients", None)
+        if old:
+            old.destroy()
+        if "patients" not in self._frames:
+            self._frames["patients"] = PatientView(parent=self.container, controller=self)
+        self.show_frame(self._frames["patients"])
         self._refresh_patient_roster()
 
     def _refresh_patient_roster(self):
@@ -367,17 +371,15 @@ class ClinicApp(ctk.CTk):
         self.show_appointments()
 
     def show_users(self):
-        self.clear_screen()
-        frame = UserMgmtView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        self.show_frame(frame)
+        if "users" not in self._frames:
+            self._frames["users"] = UserMgmtView(parent=self.container, controller=self)
+        self.show_frame(self._frames["users"])
         self.current_view.render(self.user_model.get_all_users())
 
     def show_settings(self):
-        self.clear_screen()
         if "settings" not in self._frames:
-            self._frames["settings"] = SettingsView(parent=self.container if hasattr(self, "container") else self, controller=self)
-        frame = self._frames["settings"]
-        self.show_frame(frame)
+            self._frames["settings"] = SettingsView(parent=self.container, controller=self)
+        self.show_frame(self._frames["settings"])
         if hasattr(self.current_view, "set_identity_fields"):
             self.current_view.set_identity_fields(
                 self.get_all_identity_settings())
