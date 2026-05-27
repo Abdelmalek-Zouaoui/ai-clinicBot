@@ -268,12 +268,33 @@ class ClinicApp(ctk.CTk):
             "suppliers":    self.show_patients,   # alias for sidebar compat
             "settings":     self.show_settings,
             "logout":       self.show_login_page,
+            "ai_chat":      self.open_ai_assistant,
         }
         handler = routes.get(page_key)
         if handler:
             handler()
 
     # ── Individual page show methods ──────────────────────────────────
+
+    def open_ai_assistant(self):
+        import sys
+        import os
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        ai_core_path = os.path.join(project_root, "ai-core")
+        if ai_core_path not in sys.path:
+            sys.path.insert(0, ai_core_path)
+            
+        from llm_service import ClinicLLMService
+        from view.ai_window import AIAssistantWindow
+        
+        if not hasattr(self, "llm_service"):
+            self.llm_service = ClinicLLMService(self.db)
+            
+        if hasattr(self, "ai_window") and self.ai_window.winfo_exists():
+            self.ai_window.lift()
+            self.ai_window.focus_force()
+        else:
+            self.ai_window = AIAssistantWindow(self, self.llm_service)
 
     def show_login_page(self):
         self.clear_screen()

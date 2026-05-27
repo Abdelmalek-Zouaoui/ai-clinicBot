@@ -1,0 +1,5 @@
+Maîtriser l'appel API de base (Groq, c'est gratuit) — 1 jour
+Comprendre le function calling avec 1-2 fonctions simples — 1 jour
+Construire la boucle agent manuellement sans LangChain — 2 jours
+Intégrer dans CustomTkinter (fenêtre chat) — 1-2 jours
+LangChain optionnel après si tu veux aller plus loin

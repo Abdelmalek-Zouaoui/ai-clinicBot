@@ -49,6 +49,7 @@ NAV_ITEMS = [
     ("export",       "📤", "Export"),
     ("users",        "👥", "Users"),
     ("settings",     "⚙️", "Settings"),
+    ("ai_chat",      "🤖", "AI Assistant"),
 ]
 
 FONT = "Helvetica"

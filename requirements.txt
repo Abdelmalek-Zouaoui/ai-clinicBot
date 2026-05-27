@@ -3,4 +3,5 @@ Pillow
 bcrypt
 reportlab
 openpyxl  
- 
+groq
+python-dotenv
