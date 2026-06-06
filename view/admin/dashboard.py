@@ -84,19 +84,24 @@ class DashboardView(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=0)   # sidebar fixed
         self.grid_columnconfigure(1, weight=1)   # content expands
 
-        # Sidebar
+        # Sidebar — stays fixed, never scrolls
         self._sidebar = Sidebar(self, self.controller, active="dashboard")
         self._sidebar.grid(row=0, column=0, sticky="ns")
 
-        # Content wrapper
-        self._content = ctk.CTkFrame(self, fg_color=BG)
+        # Scrollable content area
+        self._content = ctk.CTkScrollableFrame(
+            self, fg_color=BG,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=ACCENT,
+        )
         self._content.grid(row=0, column=1, sticky="nsew")
-        self._content.grid_rowconfigure(2, weight=1)
         self._content.grid_columnconfigure(0, weight=1)
 
         self._build_topbar()
         self._build_stat_cards()
+        self._build_insights_panel()
         self._build_main_area()
+
 
     # ── Top bar ───────────────────────────────────────────────────────────
 
@@ -190,18 +195,149 @@ class DashboardView(ctk.CTkFrame):
                          text_color=TEXT_SECONDARY).grid(
                 row=1, column=2, sticky="w", padx=(0, 16), pady=(0, 16))
 
+    # ── AI Insights panel ──────────────────────────────────────────────────
+
+    def _build_insights_panel(self):
+        """Row 2 — collapsible AI insights banner."""
+        self._insights_outer = ctk.CTkFrame(self._content, fg_color=BG)
+        self._insights_outer.grid(row=2, column=0, sticky="ew",
+                                  padx=16, pady=(8, 0))
+        self._insights_outer.grid_columnconfigure(0, weight=1)
+
+        # Header row
+        hdr = ctk.CTkFrame(self._insights_outer, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(hdr,
+                     text="🤖  AI Insights",
+                     font=ctk.CTkFont(FONT_FAMILY, 14, "bold"),
+                     text_color=TEXT_PRIMARY,
+                     anchor="w").grid(row=0, column=0, sticky="w")
+
+        self._insights_status = ctk.CTkLabel(
+            hdr, text="",
+            font=ctk.CTkFont(FONT_FAMILY, 11),
+            text_color=TEXT_SECONDARY)
+        self._insights_status.grid(row=0, column=1, sticky="e", padx=(0, 8))
+
+        ctk.CTkButton(
+            hdr, text="↻  Analyser", width=100, height=28,
+            font=ctk.CTkFont(FONT_FAMILY, 11),
+            fg_color=ACCENT, hover_color="#1D4ED8",
+            text_color="white", corner_radius=6,
+            command=lambda: self.controller.refresh_ai_insights()
+        ).grid(row=0, column=2, sticky="e")
+
+        # Container for insight cards
+        self._insights_container = ctk.CTkFrame(
+            self._insights_outer, fg_color="transparent")
+        self._insights_container.grid(row=1, column=0, sticky="ew",
+                                       pady=(8, 0))
+        self._insights_container.grid_columnconfigure(0, weight=1)
+
+        # Initial skeleton / placeholder
+        self._show_insights_placeholder()
+
+    def _show_insights_placeholder(self):
+        """Show a subtle placeholder before insights are loaded."""
+        for w in self._insights_container.winfo_children():
+            w.destroy()
+
+        placeholder = ctk.CTkFrame(self._insights_container,
+                                    fg_color=PANEL_BG,
+                                    border_width=1, border_color=BORDER,
+                                    corner_radius=10, height=48)
+        placeholder.grid(row=0, column=0, sticky="ew", pady=2)
+        placeholder.grid_propagate(False)
+        ctk.CTkLabel(placeholder,
+                     text="💡  Cliquez sur \"Analyser\" ou attendez le chargement des insights...",
+                     font=ctk.CTkFont(FONT_FAMILY, 12),
+                     text_color=TEXT_SECONDARY
+                     ).place(relx=0.5, rely=0.5, anchor="center")
+
+    def _render_insight_card(self, idx: int, insight: dict):
+        """Render a single insight card inside the container."""
+        priority = insight.get("priority", "low")
+        icon     = insight.get("icon", "💡")
+        title    = insight.get("title", "")
+        message  = insight.get("message", "")
+        action   = insight.get("action", "")
+
+        # Priority colour mapping
+        colors_map = {
+            "high":   (DANGER,  DANGER_LIGHT),
+            "medium": (WARNING, WARNING_LIGHT),
+            "low":    (SUCCESS, SUCCESS_LIGHT),
+        }
+        color, light = colors_map.get(priority, (ACCENT, ACCENT_LIGHT))
+
+        card = ctk.CTkFrame(self._insights_container,
+                            fg_color=PANEL_BG,
+                            border_width=1, border_color=BORDER,
+                            corner_radius=10)
+        card.grid(row=idx, column=0, sticky="ew", pady=3)
+        card.grid_columnconfigure(2, weight=1)
+
+        # Coloured left stripe
+        stripe = ctk.CTkFrame(card, fg_color=color,
+                              width=4, corner_radius=0)
+        stripe.grid(row=0, column=0, rowspan=2, sticky="ns")
+        stripe.grid_propagate(False)
+
+        # Icon bubble
+        bubble = ctk.CTkFrame(card, fg_color=light,
+                              width=36, height=36, corner_radius=8)
+        bubble.grid(row=0, column=1, rowspan=2,
+                    padx=(12, 10), pady=10)
+        bubble.grid_propagate(False)
+        ctk.CTkLabel(bubble, text=icon,
+                     font=ctk.CTkFont(size=16)).place(
+            relx=0.5, rely=0.5, anchor="center")
+
+        # Title
+        ctk.CTkLabel(card, text=title,
+                     font=ctk.CTkFont(FONT_FAMILY, 12, "bold"),
+                     text_color=TEXT_PRIMARY,
+                     anchor="w").grid(row=0, column=2, sticky="w",
+                                       padx=(0, 12), pady=(10, 0))
+
+        # Message + action combined
+        detail = message
+        if action:
+            detail += f"  →  {action}"
+        ctk.CTkLabel(card, text=detail,
+                     font=ctk.CTkFont(FONT_FAMILY, 11),
+                     text_color=TEXT_SECONDARY,
+                     anchor="w", wraplength=700).grid(
+            row=1, column=2, sticky="w",
+            padx=(0, 12), pady=(0, 10))
+
+        # Priority badge
+        badge_text = {"high": "URGENT", "medium": "ATTENTION", "low": "INFO"}
+        ctk.CTkLabel(card,
+                     text=badge_text.get(priority, "INFO"),
+                     font=ctk.CTkFont(FONT_FAMILY, 9, "bold"),
+                     text_color=color,
+                     fg_color=light,
+                     corner_radius=4,
+                     width=60, height=20).grid(
+            row=0, column=3, padx=(0, 14), pady=(10, 0), sticky="ne")
+
     # ── Main area  (chart left | waiting right) ───────────────────────────
 
     def _build_main_area(self):
-        area = ctk.CTkFrame(self._content, fg_color=BG)
-        area.grid(row=2, column=0, sticky="nsew",
+        area = ctk.CTkFrame(self._content, fg_color=BG, height=420)
+        area.grid(row=3, column=0, sticky="ew",
                   padx=16, pady=16)
+        area.grid_propagate(False)
         area.grid_rowconfigure(0, weight=1)
         area.grid_columnconfigure(0, weight=62)
         area.grid_columnconfigure(1, weight=38)
 
         self._build_chart_panel(area)
         self._build_waiting_panel(area)
+
 
     # ── Revenue chart ─────────────────────────────────────────────────────
 
@@ -510,6 +646,45 @@ class DashboardView(ctk.CTkFrame):
         self._hover_bar   = None
         # Delay draw until canvas has been laid out
         self.after(50, self._draw_chart)
+
+    def show_insights_loading(self):
+        """Show a loading state in the insights panel."""
+        for w in self._insights_container.winfo_children():
+            w.destroy()
+
+        loading = ctk.CTkFrame(self._insights_container,
+                                fg_color=PANEL_BG,
+                                border_width=1, border_color=BORDER,
+                                corner_radius=10, height=48)
+        loading.grid(row=0, column=0, sticky="ew", pady=2)
+        loading.grid_propagate(False)
+        ctk.CTkLabel(loading,
+                     text="⏳  Analyse en cours — l'IA examine les données de la clinique...",
+                     font=ctk.CTkFont(FONT_FAMILY, 12),
+                     text_color=ACCENT
+                     ).place(relx=0.5, rely=0.5, anchor="center")
+        self._insights_status.configure(text="Chargement...")
+
+    def update_insights(self, insights: list[dict]):
+        """Render AI-generated insight cards.
+
+        Each item in *insights* must have keys:
+            priority, icon, title, message, action
+        """
+        for w in self._insights_container.winfo_children():
+            w.destroy()
+
+        if not insights:
+            self._show_insights_placeholder()
+            self._insights_status.configure(text="")
+            return
+
+        for idx, insight in enumerate(insights):
+            self._render_insight_card(idx, insight)
+
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%H:%M")
+        self._insights_status.configure(text=f"Mis à jour à {ts}")
 
     def apply_lang(self, lang_code: str):
         """Language switch hook — extend if localisation is needed."""

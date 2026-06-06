@@ -33,6 +33,8 @@ class AIWorker(threading.Thread):
                 chief_complaint = self.payload.get("chief_complaint", "")
                 patient_context = self.payload.get("patient_context", {})
                 result = self.service.suggest_diagnoses(chief_complaint, patient_context)
+            elif self.mode == "insights":
+                result = self.service.generate_dashboard_insights()
             else:
                 raise ValueError(f"Mode inconnu: {self.mode}")
             

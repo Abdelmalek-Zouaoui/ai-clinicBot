@@ -13,7 +13,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 import json
+import traceback
 from groq import APIConnectionError, APIStatusError, Groq, RateLimitError
+
+from clinic_analytics import ClinicAnalytics
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -385,6 +388,117 @@ class ClinicLLMService:
             f"Contexte patient: {context_text}"
         )
         return self.run_agent(prompt, max_steps=10)
+
+    # ── Dashboard Insights ────────────────────────────────────────────
+
+    def generate_dashboard_insights(self) -> list[dict]:
+        """Collect clinic metrics and ask the LLM to produce actionable insights.
+
+        Returns a list of dicts, each with keys:
+            priority  – "high" | "medium" | "low"
+            icon      – emoji
+            title     – short headline
+            message   – 1-2 sentence explanation
+            action    – suggested action for the admin
+        Falls back to an empty list on any error.
+        """
+        if not self.db:
+            return [{"priority": "low", "icon": "⚠️",
+                     "title": "Base de données indisponible",
+                     "message": "Impossible d'analyser les données sans connexion à la base.",
+                     "action": ""}]
+
+        try:
+            analytics = ClinicAnalytics(self.db)
+            metrics = analytics.collect_all_metrics()
+        except Exception as exc:
+            print(f"[insights] analytics error: {exc}")
+            return [{"priority": "low", "icon": "⚠️",
+                     "title": "Erreur d'analyse",
+                     "message": f"Impossible de collecter les métriques : {exc}",
+                     "action": ""}]
+
+        prompt = (
+            "Tu es un analyste de données pour une clinique médicale. "
+            "Voici les métriques du mois en cours comparées au mois précédent.\n\n"
+            f"{json.dumps(metrics, ensure_ascii=False, indent=2)}\n\n"
+            "À partir de ces métriques, génère entre 3 et 5 insights classés par importance.\n"
+            "Chaque insight doit être un objet JSON avec ces clés :\n"
+            '  - "priority": "high" ou "medium" ou "low"\n'
+            '  - "icon": un seul emoji représentatif\n'
+            '  - "title": titre court (max 10 mots)\n'
+            '  - "message": explication en 1-2 phrases\n'
+            '  - "action": recommandation concrète pour l\'administrateur\n\n'
+            "Réponds UNIQUEMENT avec un tableau JSON valide, sans texte avant ni après.\n"
+            "Exemple de format :\n"
+            '[{"priority":"high","icon":"📉","title":"Baisse de fréquentation",'
+            '"message":"Le nombre de rendez-vous a baissé de 20% par rapport au mois dernier.",'
+            '"action":"Envisagez une campagne de rappel par SMS."}]'
+        )
+
+        # Use a fresh history so insights don't pollute the chat context
+        if not self.client:
+            return [{"priority": "low", "icon": "⚠️",
+                     "title": "Clé API manquante",
+                     "message": "GROQ_API_KEY non configurée.",
+                     "action": "Ajoutez votre clé API dans le fichier .env"}]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system",
+                     "content": "Tu es un analyste de données médical. "
+                                "Réponds toujours en JSON valide, en français."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1024,
+                temperature=0.3,
+                tool_choice="none",
+            )
+            raw = response.choices[0].message.content or "[]"
+
+            # Strip markdown code fences if the model wraps its answer
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1]  # remove opening fence
+            if raw.endswith("```"):
+                raw = raw.rsplit("```", 1)[0]
+            raw = raw.strip()
+
+            insights = json.loads(raw)
+            if not isinstance(insights, list):
+                insights = [insights]
+
+            # Validate / sanitise each insight
+            valid = []
+            for item in insights:
+                if isinstance(item, dict) and "message" in item:
+                    valid.append({
+                        "priority": item.get("priority", "low"),
+                        "icon":     item.get("icon", "💡"),
+                        "title":    item.get("title", "Insight"),
+                        "message":  item.get("message", ""),
+                        "action":   item.get("action", ""),
+                    })
+            return valid or [{"priority": "low", "icon": "✅",
+                              "title": "Tout va bien",
+                              "message": "Aucune anomalie détectée ce mois-ci.",
+                              "action": ""}]
+
+        except (json.JSONDecodeError, KeyError, IndexError) as parse_err:
+            print(f"[insights] JSON parse error: {parse_err}")
+            return [{"priority": "low", "icon": "⚠️",
+                     "title": "Erreur de format",
+                     "message": "L'IA n'a pas retourné un format exploitable.",
+                     "action": ""}]
+        except Exception as exc:
+            print(f"[insights] LLM error: {exc}")
+            traceback.print_exc()
+            return [{"priority": "low", "icon": "⚠️",
+                     "title": "Erreur de connexion",
+                     "message": str(exc),
+                     "action": ""}]
 
     @staticmethod
     def _appointment_row(row: tuple[Any, ...]) -> dict[str, Any]:

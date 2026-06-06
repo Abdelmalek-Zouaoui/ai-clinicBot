@@ -277,24 +277,20 @@ class ClinicApp(ctk.CTk):
     # ── Individual page show methods ──────────────────────────────────
 
     def open_ai_assistant(self):
-        import sys
-        import os
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        ai_core_path = os.path.join(project_root, "ai-core")
-        if ai_core_path not in sys.path:
-            sys.path.insert(0, ai_core_path)
-            
-        from llm_service import ClinicLLMService
         from view.ai_window import AIAssistantWindow
-        
-        if not hasattr(self, "llm_service"):
-            self.llm_service = ClinicLLMService(self.db)
-            
+
+        try:
+            self._ensure_llm_service()
+        except Exception as exc:
+            logging.warning(f"[ai_chat] LLM service init failed: {exc}")
+            return
+
         if hasattr(self, "ai_window") and self.ai_window.winfo_exists():
             self.ai_window.lift()
             self.ai_window.focus_force()
         else:
             self.ai_window = AIAssistantWindow(self, self.llm_service)
+
 
     def show_login_page(self):
         self.clear_screen()
@@ -314,6 +310,7 @@ class ClinicApp(ctk.CTk):
             )
         self.show_frame(self._frames["dashboard"])
         self.refresh_dashboard_data()
+        self.refresh_ai_insights()
 
     def show_service_list(self):
         if "service_list" not in self._frames:
@@ -483,6 +480,69 @@ class ClinicApp(ctk.CTk):
     def get_monthly_sales_data(self) -> dict:
         """Alias used by DashboardView.update_chart — delegates to appt_model."""
         return self.appt_model.get_monthly_revenue()
+
+    # ── AI Insights ───────────────────────────────────────────────────
+
+    def _ensure_llm_service(self):
+        """Lazily initialise the LLM service (shares instance with chat window)."""
+        if not hasattr(self, "llm_service") or self.llm_service is None:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            ai_core_path = os.path.join(project_root, "ai-core")
+            if ai_core_path not in sys.path:
+                sys.path.insert(0, ai_core_path)
+            from llm_service import ClinicLLMService
+            self.llm_service = ClinicLLMService(self.db)
+
+    def refresh_ai_insights(self):
+        """Launch AI insight generation in a background thread.
+
+        Shows a loading state immediately, then updates the dashboard
+        panel when the LLM returns its analysis.
+        """
+        # Only run when dashboard is visible
+        if not hasattr(self.current_view, "show_insights_loading"):
+            return
+
+        try:
+            self._ensure_llm_service()
+        except Exception as exc:
+            logging.warning(f"[insights] LLM service init failed: {exc}")
+            return
+
+        # Show spinner right away (main thread)
+        self.current_view.show_insights_loading()
+
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        ai_core_path = os.path.join(project_root, "ai-core")
+        if ai_core_path not in sys.path:
+            sys.path.insert(0, ai_core_path)
+        from ai_worker import AIWorker
+
+        def _on_insights(result):
+            """Called on the main thread via .after(0, ...) by the worker."""
+            if hasattr(self.current_view, "update_insights"):
+                # result is a list[dict] from generate_dashboard_insights()
+                insights = result if isinstance(result, list) else []
+                self.current_view.update_insights(insights)
+
+        def _on_error(err):
+            if hasattr(self.current_view, "update_insights"):
+                self.current_view.update_insights([{
+                    "priority": "low",
+                    "icon": "⚠️",
+                    "title": "Erreur d'analyse",
+                    "message": str(err),
+                    "action": "",
+                }])
+
+        worker = AIWorker(
+            service=self.llm_service,
+            mode="insights",
+            payload={},
+            callback=lambda result: self.after(0, _on_insights, result),
+            error_callback=lambda err: self.after(0, _on_error, err),
+        )
+        worker.start()
 
     # ══════════════════════ SERVICE MANAGEMENT ════════════════════════
 
