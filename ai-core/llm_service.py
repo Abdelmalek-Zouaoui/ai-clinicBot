@@ -149,9 +149,10 @@ class ClinicLLMService:
         self.history.append({"role": "user", "content": message_utilisateur})
 
         try:
+            chat_messages = self._build_chat_messages()
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=self.history,
+                messages=chat_messages,
                 max_tokens=1024,
                 temperature=0.2,
                 tool_choice="none",
@@ -172,10 +173,49 @@ class ClinicLLMService:
 
         except APIStatusError as error:
             self.history.pop()
-            return f"Erreur API ({error.status_code})."
+            return self._format_api_error(error)
 
     def reset_history(self) -> None:
         self.history = [self.history[0]]
+
+    def _message_to_history_entry(self, message: Any) -> dict:
+        if hasattr(message, "model_dump"):
+            return message.model_dump(exclude_none=True)
+
+        if isinstance(message, dict):
+            return message
+
+        return {
+            "role": getattr(message, "role", "assistant"),
+            "content": getattr(message, "content", "") or "",
+        }
+
+    def _history_role(self, item: Any) -> str | None:
+        if isinstance(item, dict):
+            return item.get("role")
+        return getattr(item, "role", None)
+
+    def _build_chat_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for item in self.history:
+            message = self._message_to_history_entry(item)
+            role = message.get("role")
+            if role not in {"system", "user", "assistant"}:
+                continue
+
+            messages.append({
+                "role": role,
+                "content": message.get("content", "") or "",
+            })
+
+        return messages or [self.history[0]]
+
+    @staticmethod
+    def _format_api_error(error: APIStatusError) -> str:
+        details = str(error).strip()
+        if details:
+            return f"Erreur API ({error.status_code}) : {details}"
+        return f"Erreur API ({error.status_code})."
 
     def run_agent(self, objectif: str, max_steps: int = 10) -> str:
         if not self.client:
@@ -200,7 +240,7 @@ class ClinicLLMService:
                 choice = response.choices[0]
                 msg = choice.message
                 finish_reason = getattr(choice, "finish_reason", None)
-                self.history.append(msg)
+                self.history.append(self._message_to_history_entry(msg))
 
                 if finish_reason != "tool_calls":
                     final_message = msg.content or ""
@@ -230,19 +270,19 @@ class ClinicLLMService:
             return f"Arrêt forcé : nombre maximum d'étapes atteint ({max_steps})."
 
         except RateLimitError:
-            last_user = max(i for i, m in enumerate(self.history) if m.get("role") == "user")
+            last_user = max(i for i, m in enumerate(self.history) if self._history_role(m) == "user")
             self.history = self.history[:last_user]
             return "Limite de requetes atteinte."
 
         except APIConnectionError:
-            last_user = max(i for i, m in enumerate(self.history) if m.get("role") == "user")
+            last_user = max(i for i, m in enumerate(self.history) if self._history_role(m) == "user")
             self.history = self.history[:last_user]
             return "Erreur de connexion reseau."
 
         except APIStatusError as error:
-            last_user = max(i for i, m in enumerate(self.history) if m.get("role") == "user")
+            last_user = max(i for i, m in enumerate(self.history) if self._history_role(m) == "user")
             self.history = self.history[:last_user]
-            return f"Erreur API ({error.status_code})."
+            return self._format_api_error(error)
 
     def _execute_tool(self, tool_name: str, tool_args: dict) -> str:
         if tool_name == "search_patients":

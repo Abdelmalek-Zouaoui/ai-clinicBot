@@ -646,22 +646,22 @@ class ClinicApp(ctk.CTk):
     def on_save_patient(self, data: dict):
         """Validate and save a new patient record."""
         try:
-            name = data.get("name", "").strip()
+            name = data.get("full_name", data.get("name", "")).strip()
             if not name or len(name) < 2:
                 self.current_view.show_form_message(
                     "Patient full name is required (min 2 chars).", success=False)
-                return
+                return False
 
             phone = data.get("phone", "").strip()
             if phone:
                 if not phone.isdigit() or len(phone) < 9 or len(phone) > 15:
                     self.current_view.show_form_message(
                         "Phone must be digits only and 9-15 characters long.", success=False)
-                    return
+                    return False
                 if self.patient_model.patient_exists_by_phone(phone):
                     self.current_view.show_form_message(
                         f"A patient with phone '{phone}' already exists.", success=False)
-                    return
+                    return False
 
             dob = data.get("date_of_birth", "").strip()
             if dob:
@@ -670,11 +670,11 @@ class ClinicApp(ctk.CTk):
                     if dob_date > datetime.now().date():
                         self.current_view.show_form_message(
                             "Date of birth cannot be in the future.", success=False)
-                        return
+                        return False
                 except ValueError:
                     self.current_view.show_form_message(
                         "Date of birth must be in YYYY-MM-DD format.", success=False)
-                    return
+                    return False
 
             email = data.get("email", "").strip()
             if email:
@@ -682,14 +682,14 @@ class ClinicApp(ctk.CTk):
                 if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                     self.current_view.show_form_message(
                         "Invalid email address format.", success=False)
-                    return
+                    return False
 
             blood_type = data.get("blood_type", "").strip().upper()
             valid_blood_types = {"", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
             if blood_type not in valid_blood_types:
                 self.current_view.show_form_message(
                     "Invalid blood type.", success=False)
-                return
+                return False
 
             pid = self.patient_model.add_patient(
                 full_name       = name,
@@ -710,27 +710,30 @@ class ClinicApp(ctk.CTk):
                 if hasattr(self.current_view, "clear_patient_form"):
                     self.current_view.clear_patient_form()
                 self._refresh_patient_roster()
+                return True
             else:
                 self.current_view.show_form_message(
                     "Failed to save patient.", success=False)
+                return False
         except Exception as e:
             logging.error(f"Error in on_save_patient: {e}", exc_info=True)
             self.current_view.show_form_message(f"Registration failed: {str(e)}", success=False)
+            return False
 
     def on_update_patient(self, patient_id: int, data: dict):
         """Validate and update an existing patient record."""
-        name = data.get("name", "").strip()
+        name = data.get("full_name", data.get("name", "")).strip()
         if not name or len(name) < 2:
             self.current_view.show_form_message(
                 "Patient full name is required (min 2 chars).", success=False)
-            return
+            return False
 
         phone = data.get("phone", "").strip()
         if phone:
             if not phone.isdigit() or len(phone) < 9 or len(phone) > 15:
                 self.current_view.show_form_message(
                     "Phone must be digits only and 9-15 characters long.", success=False)
-                return
+                return False
 
         dob = data.get("date_of_birth", "").strip()
         if dob:
@@ -739,11 +742,11 @@ class ClinicApp(ctk.CTk):
                 if dob_date > datetime.now().date():
                     self.current_view.show_form_message(
                         "Date of birth cannot be in the future.", success=False)
-                    return
+                    return False
             except ValueError:
                 self.current_view.show_form_message(
                     "Date of birth must be in YYYY-MM-DD format.", success=False)
-                return
+                return False
 
         email = data.get("email", "").strip()
         if email:
@@ -751,14 +754,14 @@ class ClinicApp(ctk.CTk):
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 self.current_view.show_form_message(
                     "Invalid email address format.", success=False)
-                return
+                return False
 
         blood_type = data.get("blood_type", "").strip().upper()
         valid_blood_types = {"", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"}
         if blood_type not in valid_blood_types:
             self.current_view.show_form_message(
                 "Invalid blood type.", success=False)
-            return
+            return False
 
         ok = self.patient_model.update_patient(
             patient_id,
@@ -778,9 +781,11 @@ class ClinicApp(ctk.CTk):
             self.current_view.show_form_message(
                 f"Patient '{name}' updated successfully!", success=True)
             self._refresh_patient_roster()
+            return True
         else:
             self.current_view.show_form_message(
                 "Failed to update patient.", success=False)
+            return False
 
     def on_delete_patient(self, patient_id: int, name: str):
         ok = self.patient_model.delete_patient(patient_id)

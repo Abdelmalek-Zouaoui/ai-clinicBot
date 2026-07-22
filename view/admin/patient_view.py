@@ -163,7 +163,7 @@ class PatientFormWindow(ctk.CTkToplevel):
             self._form_vars[key] = var
 
         # ── Fields ────────────────────────────────────────────────────────
-        entry(1, 0, "Full Name *", "name",
+        entry(1, 0, "Full Name *", "full_name",
               "e.g. Ahmed Benali", colspan=2)
         entry(2, 0, "Date of Birth", "date_of_birth", "YYYY-MM-DD")
         option(2, 1, "Gender", "gender", GENDER_OPTIONS)
@@ -238,17 +238,19 @@ class PatientFormWindow(ctk.CTkToplevel):
 
     def _submit(self):
         data = self._get_data()
-        if not data.get("name"):
+        if not data.get("full_name") and not data.get("name"):
             self._show_msg("Full name is required.", success=False)
             return
 
         if self._edit_mode:
             pid = self.prefill.get("patient_id")
             if hasattr(self.controller, "on_update_patient"):
-                self.controller.on_update_patient(pid, data)
+                ok = self.controller.on_update_patient(pid, data)
+                if not ok: return
             self._show_msg("Patient updated!", success=True)
         else:
-            self.controller.on_save_patient(data)
+            ok = self.controller.on_save_patient(data)
+            if not ok: return
             self._show_msg("Patient registered!", success=True)
 
         # Refresh the parent table

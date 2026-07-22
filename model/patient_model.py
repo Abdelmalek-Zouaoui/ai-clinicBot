@@ -62,8 +62,29 @@ class PatientModel:
         ))
 
     def delete_patient(self, patient_id) -> bool:
-        return bool(self.db.execute_query(
-            "DELETE FROM patients WHERE patient_id=?", (patient_id,)))
+        try:
+            with self.db.lock:
+                self.db.cursor.execute(
+                    "DELETE FROM prescription_items WHERE rx_id IN (SELECT rx_id FROM prescriptions WHERE patient_id=?)",
+                    (patient_id,)
+                )
+                self.db.cursor.execute("DELETE FROM prescriptions WHERE patient_id=?", (patient_id,))
+                
+                self.db.cursor.execute(
+                    "DELETE FROM appointment_services WHERE appointment_id IN (SELECT appointment_id FROM appointments WHERE patient_id=?)",
+                    (patient_id,)
+                )
+                self.db.cursor.execute("DELETE FROM appointments WHERE patient_id=?", (patient_id,))
+                
+                self.db.cursor.execute("DELETE FROM patients WHERE patient_id=?", (patient_id,))
+                
+                self.db.conn.commit()
+            return True
+        except Exception as e:
+            import logging
+            logging.error(f"Error deleting patient {patient_id}: {e}")
+            self.db.conn.rollback()
+            return False
 
     def patient_exists_by_phone(self, phone: str) -> bool:
         row = self.db.fetch_one(
